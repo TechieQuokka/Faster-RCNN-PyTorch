@@ -1,0 +1,76 @@
+# Faster R-CNN 기본 설정
+
+# 모델 설정
+model:
+  num_classes: 21  # PASCAL VOC (배경 + 20개 클래스)
+  backbone: resnet50  # resnet50 또는 vgg16
+  pretrained_backbone: true
+
+# 데이터셋 설정
+dataset:
+  name: voc  # voc 또는 coco
+  root: ./data
+  year: 2012
+  train_set: train
+  val_set: val
+
+# 데이터 증강 설정
+transforms:
+  min_size: 400  # 더 작은 크기로 빠른 학습
+  max_size: 600
+  train_augmentation: true
+
+# RPN 설정
+rpn:
+  anchor_sizes: [128, 256, 512]
+  anchor_ratios: [0.5, 1.0, 2.0]
+  nms_thresh: 0.7
+  pre_nms_top_n_train: 12000
+  pre_nms_top_n_test: 6000
+  post_nms_top_n_train: 2000
+  post_nms_top_n_test: 300
+
+# RoI Head 설정
+roi_head:
+  roi_output_size: 7
+  fg_iou_thresh: 0.5
+  bg_iou_thresh: 0.5
+  batch_size_per_image: 128
+  positive_fraction: 0.25
+  score_thresh: 0.05
+  nms_thresh: 0.3
+  detection_per_img: 100
+
+# 학습 설정
+training:
+  batch_size: 4  # RTX 3060 12GB
+  num_epochs: 5  # 테스트용 학습
+  learning_rate: 0.001
+  momentum: 0.9
+  weight_decay: 0.0005
+
+  # 학습률 스케줄링
+  lr_scheduler:
+    type: step  # step 또는 cosine
+    step_size: 3
+    gamma: 0.1
+
+  # Warm-up
+  warmup:
+    enabled: true
+    iterations: 500
+    factor: 0.333
+
+  # 체크포인트
+  checkpoint_dir: ./checkpoints
+  save_freq: 1  # Epoch마다 저장
+
+# 평가 설정
+evaluation:
+  metric: voc  # voc 또는 coco
+  iou_threshold: 0.5
+
+# 디바이스 설정
+device: cuda  # cuda 또는 cpu (RTX 3060 12GB 사용)
+num_workers: 2  # 데이터 로더 워커 수
+seed: 42
