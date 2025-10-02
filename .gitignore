@@ -7,6 +7,9 @@ checkpoints/
 data/
 *.tar
 *.zip
+images/
+labels/
+*.csv
 
 # Logs
 *.log
