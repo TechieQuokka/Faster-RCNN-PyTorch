@@ -6,60 +6,61 @@ model:
   backbone: resnet50  # resnet50 또는 vgg16
   pretrained_backbone: true
 
-# 데이터셋 설정
+# 데이터셋 설정 (공부용 - 작은 데이터셋)
 dataset:
-  name: voc  # voc 또는 coco
-  root: ./data
-  year: 2012
-  train_set: train
-  val_set: val
+  name: yolo_voc  # yolo_voc, voc, coco
+  root: /home/beethoven/workspace/deeplearning/deeplearning-project/Faster_R-CNN
+  train_csv: train_small.csv  # 1000개 샘플
+  test_csv: test_small.csv     # 200개 샘플
+  img_dir: images
+  label_dir: labels
 
-# 데이터 증강 설정
+# 데이터 증강 설정 (공부용 - 작은 이미지 크기)
 transforms:
-  min_size: 400  # 더 작은 크기로 빠른 학습
-  max_size: 600
+  min_size: 400   # 600 → 400 (33% 감소)
+  max_size: 600   # 1000 → 600 (40% 감소)
   train_augmentation: true
+  # Augmentation parameters
+  horizontal_flip_prob: 0.5
+  color_jitter: false  # 학습 속도 향상을 위해 비활성화
+  brightness: 0.2
+  contrast: 0.2
+  saturation: 0.2
+  hue: 0.1
 
-# RPN 설정
+# RPN 설정 (공부용 - 최적화)
 rpn:
   anchor_sizes: [128, 256, 512]
   anchor_ratios: [0.5, 1.0, 2.0]
   nms_thresh: 0.7
-  pre_nms_top_n_train: 12000
-  pre_nms_top_n_test: 6000
-  post_nms_top_n_train: 2000
+  pre_nms_top_n_train: 2000   # 12000 → 2000 (83% 감소)
+  pre_nms_top_n_test: 1000    # 6000 → 1000
+  post_nms_top_n_train: 1000  # 2000 → 1000
   post_nms_top_n_test: 300
 
-# RoI Head 설정
+# RoI Head 설정 (공부용 - 최적화)
 roi_head:
   roi_output_size: 7
   fg_iou_thresh: 0.5
   bg_iou_thresh: 0.5
-  batch_size_per_image: 128
+  batch_size_per_image: 64   # 128 → 64 (50% 감소)
   positive_fraction: 0.25
   score_thresh: 0.05
   nms_thresh: 0.3
   detection_per_img: 100
 
-# 학습 설정
+# 학습 설정 (공부용 - 최적화)
 training:
-  batch_size: 4  # RTX 3060 12GB
-  num_epochs: 5  # 테스트용 학습
-  learning_rate: 0.001
+  batch_size: 4  # RTX 3060 12GB (안전한 값)
+  num_epochs: 5  # 10 → 5 (공부용으로 충분)
+  learning_rate: 0.0001  # 0.001 → 0.0001 (NaN 방지)
   momentum: 0.9
   weight_decay: 0.0005
+  num_workers: 2  # 4 → 2 (CPU 부하 감소)
 
   # 학습률 스케줄링
-  lr_scheduler:
-    type: step  # step 또는 cosine
-    step_size: 3
-    gamma: 0.1
-
-  # Warm-up
-  warmup:
-    enabled: true
-    iterations: 500
-    factor: 0.333
+  lr_step_size: 2  # 3 → 2 (짧은 에폭에 맞춤)
+  lr_gamma: 0.1
 
   # 체크포인트
   checkpoint_dir: ./checkpoints

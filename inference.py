@@ -11,32 +11,32 @@ import yaml
 
 from faster_rcnn.models.faster_rcnn import build_faster_rcnn
 from faster_rcnn.data.transforms import get_transform
+from faster_rcnn.utils.config import load_config
 
 
 def load_model(config_path, checkpoint_path, device='cuda'):
     """모델 로드"""
     # 설정 로드
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
+    config = load_config(config_path)
 
     # 모델 생성
     model = build_faster_rcnn(
-        num_classes=config['model']['num_classes'],
-        backbone_name=config['model']['backbone'],
+        num_classes=config.model.num_classes,
+        backbone_name=config.model.backbone,
         pretrained_backbone=False,  # 체크포인트에서 로드
         # RPN 파라미터
-        rpn_anchor_sizes=tuple(config['rpn']['anchor_sizes']),
-        rpn_anchor_ratios=tuple(config['rpn']['anchor_ratios']),
-        rpn_nms_thresh=config['rpn']['nms_thresh'],
-        rpn_pre_nms_top_n_test=config['rpn']['pre_nms_top_n_test'],
-        rpn_post_nms_top_n_test=config['rpn']['post_nms_top_n_test'],
+        rpn_anchor_sizes=tuple(config.rpn.anchor_sizes),
+        rpn_anchor_ratios=tuple(config.rpn.anchor_ratios),
+        rpn_nms_thresh=config.rpn.nms_thresh,
+        rpn_pre_nms_top_n_test=config.rpn.pre_nms_top_n_test,
+        rpn_post_nms_top_n_test=config.rpn.post_nms_top_n_test,
         # RoI Head 파라미터
-        roi_output_size=config['roi_head']['roi_output_size'],
-        roi_fg_iou_thresh=config['roi_head']['fg_iou_thresh'],
-        roi_bg_iou_thresh=config['roi_head']['bg_iou_thresh'],
-        roi_score_thresh=config['roi_head']['score_thresh'],
-        roi_nms_thresh=config['roi_head']['nms_thresh'],
-        roi_detection_per_img=config['roi_head']['detection_per_img'],
+        roi_output_size=config.roi_head.roi_output_size,
+        roi_fg_iou_thresh=config.roi_head.fg_iou_thresh,
+        roi_bg_iou_thresh=config.roi_head.bg_iou_thresh,
+        roi_score_thresh=config.roi_head.score_thresh,
+        roi_nms_thresh=config.roi_head.nms_thresh,
+        roi_detection_per_img=config.roi_head.detection_per_img,
     )
 
     # 체크포인트 로드
@@ -118,11 +118,7 @@ def main(args):
     model, config = load_model(args.config, args.checkpoint, device)
 
     # 변환 생성
-    transform = get_transform(
-        train=False,
-        min_size=config['transforms']['min_size'],
-        max_size=config['transforms']['max_size']
-    )
+    transform = get_transform(train=False, config=config)
 
     # 클래스 이름 (PASCAL VOC 기본값)
     class_names = {

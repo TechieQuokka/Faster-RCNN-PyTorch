@@ -69,16 +69,21 @@ class Resize:
         # 리사이즈
         image = F.resize(image, (new_h, new_w))
 
-        # 박스 스케일 조정
-        if target is not None and 'boxes' in target:
-            boxes = target['boxes']
+        # 박스 스케일 조정 및 메타데이터 저장
+        if target is not None:
             scale_x = new_w / w
             scale_y = new_h / h
 
-            boxes[:, [0, 2]] *= scale_x
-            boxes[:, [1, 3]] *= scale_y
+            # 스케일 팩터 저장 (추론 시 박스 복원용)
+            target['scale_factors'] = torch.tensor([scale_x, scale_y, scale_x, scale_y])
+            target['original_size'] = (h, w)
+            target['resized_size'] = (new_h, new_w)
 
-            target['boxes'] = boxes
+            if 'boxes' in target and len(target['boxes']) > 0:
+                boxes = target['boxes']
+                boxes[:, [0, 2]] *= scale_x
+                boxes[:, [1, 3]] *= scale_y
+                target['boxes'] = boxes
 
         return image, target
 
@@ -174,28 +179,48 @@ class ColorJitter:
         return image, target
 
 
-def get_transform(train=True, min_size=600, max_size=1000):
+def get_transform(train=True, config=None, min_size=600, max_size=1000):
     """
     데이터 변환 파이프라인 생성
 
     Args:
         train: 학습용 변환 여부
-        min_size: 최소 이미지 크기
-        max_size: 최대 이미지 크기
+        config: 설정 객체 (우선순위 높음)
+        min_size: 최소 이미지 크기 (config 없을 때)
+        max_size: 최대 이미지 크기 (config 없을 때)
 
     Returns:
         transforms: Compose 객체
     """
     transforms = []
 
+    # Config에서 파라미터 가져오기
+    if config is not None:
+        min_size = config.transforms.min_size
+        max_size = config.transforms.max_size
+
     # 리사이즈 (PIL Image에서 수행)
     transforms.append(Resize(min_size, max_size))
 
     # 학습용 증강 (PIL Image에서 수행)
     if train:
-        transforms.append(RandomHorizontalFlip(0.5))
-        # 필요시 추가 증강
-        # transforms.append(ColorJitter())
+        if config is not None and config.transforms.train_augmentation:
+            # Color Jitter
+            if config.transforms.get('color_jitter', False):
+                transforms.append(ColorJitter(
+                    brightness=config.transforms.get('brightness', 0.2),
+                    contrast=config.transforms.get('contrast', 0.2),
+                    saturation=config.transforms.get('saturation', 0.2),
+                    hue=config.transforms.get('hue', 0.1)
+                ))
+
+            # Horizontal Flip
+            flip_prob = config.transforms.get('horizontal_flip_prob', 0.5)
+            if flip_prob > 0:
+                transforms.append(RandomHorizontalFlip(flip_prob))
+        else:
+            # 기본 증강 (config 없을 때)
+            transforms.append(RandomHorizontalFlip(0.5))
 
     # Tensor 변환
     transforms.append(ToTensor())

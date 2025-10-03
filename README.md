@@ -1,38 +1,45 @@
 # Faster R-CNN PyTorch 구현
 
-Faster R-CNN (Faster Region-based Convolutional Neural Networks)의 PyTorch 구현입니다.
+Faster R-CNN (Faster Region-based Convolutional Neural Networks)의 완전한 PyTorch 구현입니다.
 
 ## 특징
 
 - **End-to-End 학습**: RPN과 Detection Head가 통합된 구조
-- **유연한 Backbone**: ResNet-50, VGG16 지원
-- **다양한 데이터셋**: PASCAL VOC, MS COCO 지원
+- **유연한 Backbone**: ResNet-50, VGG16 지원 (사전학습 가중치)
+- **다양한 데이터셋**: YOLO 포맷 PASCAL VOC 지원
 - **완전한 학습 파이프라인**: 학습, 검증, 평가, 추론
-- **COCO 스타일 평가**: mAP@[0.5:0.95] 메트릭
+- **YAML 기반 설정**: 모든 하이퍼파라미터 config 파일로 관리
+- **데이터 증강**: Resize, Flip, Color Jitter 지원
+- **평가 메트릭**: VOC mAP@0.5, COCO mAP@[0.5:0.95]
+- **박스 스케일 복원**: 추론 시 원본 이미지 크기로 자동 복원
 
 ## 프로젝트 구조
 
 ```
 faster_rcnn/
 ├── models/
-│   ├── backbone.py          # ResNet, VGG Backbone
+│   ├── backbone.py          # ResNet-50, VGG16 Backbone
 │   ├── rpn.py               # Region Proposal Network
-│   ├── roi_head.py          # RoI Pooling + Detection Head
+│   ├── roi_head.py          # RoI Align + Detection Head
 │   └── faster_rcnn.py       # 전체 모델 통합
 ├── utils/
 │   ├── anchor_generator.py  # Anchor 생성
 │   ├── bbox_tools.py        # 박스 변환, IoU 계산
 │   ├── nms.py               # Non-Maximum Suppression
-│   └── loss.py              # 손실 함수
+│   ├── loss.py              # 손실 함수
+│   └── config.py            # Config 관리
 ├── data/
-│   ├── dataset.py           # 데이터셋 클래스
-│   ├── transforms.py        # 데이터 증강
-│   └── collate.py           # 배치 처리
+│   ├── transforms.py        # Resize, 정규화, 데이터 증강
+│   ├── collate.py           # 배치 처리
+│   └── dataset.py           # PASCAL VOC 데이터셋
 ├── engine/
 │   ├── trainer.py           # 학습 루프
-│   └── evaluator.py         # 평가 (mAP 계산)
-└── configs/
-    └── default.yaml         # 기본 설정
+│   └── evaluator.py         # 평가 (VOC/COCO mAP)
+├── configs/
+│   └── default.yaml         # 기본 설정 (YOLO VOC)
+├── yolo_voc_dataset.py      # YOLO 포맷 VOC 데이터셋
+├── train_voc.py             # YOLO VOC 학습 스크립트
+└── inference.py             # 추론 스크립트
 ```
 
 ## 설치
@@ -96,33 +103,58 @@ data/
 
 ## 학습
 
-### 기본 학습
+### YOLO 포맷 PASCAL VOC 학습
 
 ```bash
-python train.py --config faster_rcnn/configs/default.yaml
+# 기본 학습
+python train_voc.py
+
+# Config 파일 지정
+python train_voc.py --config faster_rcnn/configs/default.yaml
+
+# 하이퍼파라미터 오버라이드
+python train_voc.py --epochs 20 --batch-size 8 --lr 0.0001
+
+# 학습 재개
+python train_voc.py --resume checkpoints/checkpoint_epoch_8.pth
 ```
 
-### 학습 재개
-
-```bash
-python train.py --config faster_rcnn/configs/default.yaml --resume checkpoints/checkpoint_epoch_8.pth
-```
-
-### 설정 파일 수정
-
-`faster_rcnn/configs/default.yaml` 파일을 편집하여 하이퍼파라미터 조정:
+### 설정 파일 (`faster_rcnn/configs/default.yaml`)
 
 ```yaml
 # 모델 설정
 model:
-  num_classes: 21  # PASCAL VOC
+  num_classes: 21  # PASCAL VOC (배경 + 20 클래스)
   backbone: resnet50  # resnet50 또는 vgg16
+  pretrained_backbone: true
+
+# 데이터셋 설정
+dataset:
+  name: yolo_voc
+  root: /path/to/data
+  train_csv: train.csv
+  test_csv: test.csv
+  img_dir: images
+  label_dir: labels
+
+# 데이터 증강
+transforms:
+  min_size: 600
+  max_size: 1000
+  train_augmentation: true
+  horizontal_flip_prob: 0.5
+  color_jitter: true
 
 # 학습 설정
 training:
-  batch_size: 2
-  num_epochs: 12
+  batch_size: 4
+  num_epochs: 10
   learning_rate: 0.001
+
+# 평가 설정
+evaluation:
+  metric: voc  # voc 또는 coco
+  iou_threshold: 0.5
 ```
 
 ## 추론

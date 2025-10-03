@@ -56,7 +56,13 @@ class COCOEvaluator:
 
             # CPU로 이동
             predictions = [{k: v.cpu() for k, v in pred.items()} for pred in predictions]
-            targets = [{k: v.cpu() for k, v in t.items()} for t in targets]
+            # Move only tensor values to CPU (skip tuples like original_size, resized_size)
+            targets = [{k: v.cpu() if torch.is_tensor(v) else v
+                        for k, v in t.items()} for t in targets]
+
+            # **FIX**: predictions에 image_id 추가 (targets에서 복사)
+            for pred, target in zip(predictions, targets):
+                pred['image_id'] = target['image_id']
 
             all_predictions.extend(predictions)
             all_targets.extend(targets)
@@ -90,12 +96,15 @@ class COCOEvaluator:
             gt_labels = target['labels']
             image_id = target['image_id'].item()
 
-            # 예측 결과 저장
+            # 예측 결과 저장 (pred image_id도 정수로 변환)
+            pred_image_id = pred['image_id'].item() if torch.is_tensor(pred['image_id']) else (
+                pred['image_id'][0] if isinstance(pred['image_id'], (list, tuple)) else pred['image_id']
+            )
             for box, score, label in zip(pred_boxes, pred_scores, pred_labels):
                 pred_by_class[label.item()].append({
                     'box': box,
                     'score': score.item(),
-                    'image_id': image_id
+                    'image_id': pred_image_id  # 정수로 변환된 image_id 사용
                 })
 
             # GT 저장

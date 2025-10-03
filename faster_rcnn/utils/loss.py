@@ -61,22 +61,27 @@ class RPNLoss(nn.Module):
         num_valid = valid_mask.sum()
 
         # 분류 손실 (Binary Cross Entropy)
-        objectness = objectness[valid_mask]
-        labels_valid = labels[valid_mask].float()
-        cls_loss = F.binary_cross_entropy_with_logits(
-            objectness, labels_valid, reduction='sum'
-        ) / num_valid
+        if num_valid > 0:
+            objectness_valid = objectness[valid_mask]
+            labels_valid = labels[valid_mask].float()
+            cls_loss = F.binary_cross_entropy_with_logits(
+                objectness_valid, labels_valid, reduction='sum'
+            ) / num_valid
+        else:
+            # 유효한 샘플이 없는 경우 (매우 드물지만 안전장치)
+            cls_loss = torch.tensor(0.0, device=objectness.device, requires_grad=True)
 
         # 회귀 손실 (Smooth L1, positive 샘플에 대해서만)
         pos_mask = labels == 1
         num_pos = pos_mask.sum()
 
         if num_pos > 0:
-            pred_bbox_deltas = pred_bbox_deltas[pos_mask]
-            bbox_targets = bbox_targets[pos_mask]
-            reg_loss = smooth_l1_loss(pred_bbox_deltas, bbox_targets).sum() / num_pos
+            pred_bbox_deltas_pos = pred_bbox_deltas[pos_mask]
+            bbox_targets_pos = bbox_targets[pos_mask]
+            reg_loss = smooth_l1_loss(pred_bbox_deltas_pos, bbox_targets_pos).sum() / num_pos
         else:
-            reg_loss = torch.tensor(0.0, device=objectness.device)
+            # Positive 샘플이 없는 경우
+            reg_loss = torch.tensor(0.0, device=objectness.device, requires_grad=True)
 
         # 전체 손실
         total_loss = cls_loss + self.lambda_reg * reg_loss
@@ -123,12 +128,13 @@ class DetectionLoss(nn.Module):
             box_regression = box_regression.view(-1, box_regression.size(1) // 4, 4)
 
             # 각 샘플의 GT 클래스에 해당하는 박스 선택
-            box_regression = box_regression[pos_mask, labels_pos]
-            regression_targets = regression_targets[pos_mask]
+            box_regression_pos = box_regression[pos_mask, labels_pos]
+            regression_targets_pos = regression_targets[pos_mask]
 
-            reg_loss = smooth_l1_loss(box_regression, regression_targets).sum() / num_pos
+            reg_loss = smooth_l1_loss(box_regression_pos, regression_targets_pos).sum() / num_pos
         else:
-            reg_loss = torch.tensor(0.0, device=class_logits.device)
+            # Positive 샘플이 없는 경우 (모두 배경)
+            reg_loss = torch.tensor(0.0, device=class_logits.device, requires_grad=True)
 
         # 전체 손실
         total_loss = cls_loss + self.lambda_reg * reg_loss

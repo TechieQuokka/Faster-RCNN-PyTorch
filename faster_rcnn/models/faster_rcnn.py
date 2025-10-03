@@ -81,20 +81,17 @@ class FasterRCNN(nn.Module):
             detection_per_img=roi_detection_per_img,
         )
 
-        # 이미지 크기 제한
+        # 이미지 크기 제한 (정보용, 실제 리사이즈는 Dataset에서 수행)
         self.min_size = min_size
         self.max_size = max_size
-
-        # 이미지 정규화 (ImageNet 통계)
-        self.image_mean = [0.485, 0.456, 0.406]
-        self.image_std = [0.229, 0.224, 0.225]
 
     def forward(self, images, targets=None):
         """
         Args:
             images: List[Tensor] 또는 Tensor [B, 3, H, W]
+                (이미 Dataset에서 정규화 및 리사이즈 완료)
             targets: List[Dict] GT 타겟 (학습시)
-                각 Dict는 'boxes'와 'labels' 포함
+                각 Dict는 'boxes', 'labels', 'original_size', 'scale_factors' 포함
 
         Returns:
             학습 모드: losses (Dict)
@@ -104,26 +101,49 @@ class FasterRCNN(nn.Module):
         if self.training and targets is None:
             raise ValueError("학습 모드에서는 targets가 필요합니다")
 
-        # 이미지 전처리
-        original_image_sizes = []
-        if isinstance(images, list):
-            for img in images:
-                original_image_sizes.append((img.shape[-2], img.shape[-1]))
-        else:
-            for i in range(images.shape[0]):
-                original_image_sizes.append((images.shape[-2], images.shape[-1]))
+        # 이미지 리스트 확인
+        if not isinstance(images, list):
+            images = [images]
 
-        # 이미지 정규화
-        images, targets = self.transform(images, targets)
+        # 원본 이미지 크기 저장 (추론 시 박스 복원용)
+        original_image_sizes = []
+        image_sizes = []
+
+        for i, img in enumerate(images):
+            image_sizes.append(img.shape[-2:])
+
+            if not self.training and targets is not None and i < len(targets):
+                if 'original_size' in targets[i]:
+                    original_image_sizes.append(tuple(targets[i]['original_size']))
+                else:
+                    original_image_sizes.append(img.shape[-2:])
+            else:
+                original_image_sizes.append(img.shape[-2:])
+
+        # 배치 크기
+        batch_size = len(images)
+
+        # 이미지를 하나의 배치로 처리하기 위해 패딩
+        # 최대 크기 찾기
+        max_h = max(img.shape[-2] for img in images)
+        max_w = max(img.shape[-1] for img in images)
+
+        # 패딩된 이미지 생성
+        padded_images = []
+        for img in images:
+            h, w = img.shape[-2:]
+            padded_img = torch.zeros((3, max_h, max_w), dtype=img.dtype, device=img.device)
+            padded_img[:, :h, :w] = img
+            padded_images.append(padded_img)
+
+        # 배치로 스택
+        images_batched = torch.stack(padded_images, dim=0)
 
         # Backbone을 통한 특징 추출
-        features = self.backbone(images)
+        features = self.backbone(images_batched)
 
-        # 이미지 크기
-        image_sizes = [images.shape[-2:]] * images.shape[0]
-
-        # RPN
-        proposals, rpn_objectness, rpn_bbox_deltas = self.rpn(features, image_sizes[0])
+        # RPN (첫 번째 이미지 크기 사용, 모든 이미지가 패딩되어 같은 크기)
+        proposals, rpn_objectness, rpn_bbox_deltas = self.rpn(features, (max_h, max_w))
 
         if self.training:
             # 학습 모드
@@ -171,28 +191,6 @@ class FasterRCNN(nn.Module):
 
             return detections
 
-    def transform(self, images, targets=None):
-        """
-        이미지 정규화 및 배치 처리
-
-        Args:
-            images: List[Tensor] 또는 Tensor
-            targets: List[Dict] (옵션)
-
-        Returns:
-            images: Tensor [B, 3, H, W]
-            targets: List[Dict] (옵션)
-        """
-        if isinstance(images, list):
-            images = torch.stack(images)
-
-        # 정규화
-        device = images.device
-        mean = torch.tensor(self.image_mean, device=device).view(1, 3, 1, 1)
-        std = torch.tensor(self.image_std, device=device).view(1, 3, 1, 1)
-        images = (images - mean) / std
-
-        return images, targets
 
     def prepare_rpn_targets(self, features, targets, image_size):
         """
@@ -241,16 +239,36 @@ class FasterRCNN(nn.Module):
 
         Args:
             detections: List[Dict]
-            image_sizes: List[(height, width)] 정규화된 크기
+            image_sizes: List[(height, width)] 리사이즈된 크기
             original_image_sizes: List[(height, width)] 원본 크기
 
         Returns:
             detections: List[Dict] 스케일 복원된 검출 결과
         """
-        for i, (detection, original_size) in enumerate(zip(detections, original_image_sizes)):
+        for i, (detection, resized_size, original_size) in enumerate(
+            zip(detections, image_sizes, original_image_sizes)
+        ):
             boxes = detection['boxes']
-            # 여기서는 크기가 같다고 가정 (실제로는 리사이즈 로직 필요)
-            detections[i]['boxes'] = boxes
+
+            if len(boxes) > 0:
+                # 스케일 팩터 계산
+                resized_h, resized_w = resized_size
+                original_h, original_w = original_size
+
+                scale_x = original_w / resized_w
+                scale_y = original_h / resized_h
+
+                # 박스 좌표 스케일 복원
+                boxes[:, [0, 2]] *= scale_x
+                boxes[:, [1, 3]] *= scale_y
+
+                # 원본 이미지 경계 내로 클리핑
+                boxes[:, 0].clamp_(min=0, max=original_w)
+                boxes[:, 1].clamp_(min=0, max=original_h)
+                boxes[:, 2].clamp_(min=0, max=original_w)
+                boxes[:, 3].clamp_(min=0, max=original_h)
+
+                detections[i]['boxes'] = boxes
 
         return detections
 

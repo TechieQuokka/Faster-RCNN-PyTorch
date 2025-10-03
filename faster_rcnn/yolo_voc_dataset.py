@@ -8,7 +8,6 @@ import torch
 from torch.utils.data import Dataset
 from PIL import Image
 import pandas as pd
-import torchvision.transforms as transforms
 
 
 class YOLOVOCDataset(Dataset):
@@ -19,20 +18,18 @@ class YOLOVOCDataset(Dataset):
     Converts to: boxes (x1, y1, x2, y2) in pixel coordinates, labels (class_id + 1 for background)
     """
 
-    def __init__(self, csv_file, img_dir, label_dir, transform=None, resize_to=(600, 600)):
+    def __init__(self, csv_file, img_dir, label_dir, transform=None):
         """
         Args:
             csv_file: Path to CSV file with image,label pairs
             img_dir: Directory with images
             label_dir: Directory with YOLO format labels
-            transform: Image transformations
-            resize_to: Target size (height, width) for resizing images
+            transform: Transform pipeline (includes resize, augmentation, normalization)
         """
         self.annotations = pd.read_csv(csv_file, header=None, names=['image', 'label'])
         self.img_dir = img_dir
         self.label_dir = label_dir
         self.transform = transform
-        self.resize_to = resize_to
 
         # PASCAL VOC 20 classes
         self.classes = [
@@ -54,17 +51,6 @@ class YOLOVOCDataset(Dataset):
         # Get original image size
         orig_width, orig_height = image.size
 
-        # Resize image
-        if self.resize_to is not None:
-            target_height, target_width = self.resize_to
-            image = image.resize((target_width, target_height))
-            scale_x = target_width / orig_width
-            scale_y = target_height / orig_height
-        else:
-            scale_x = 1.0
-            scale_y = 1.0
-            target_width, target_height = orig_width, orig_height
-
         # Load labels
         label_name = self.annotations.iloc[idx, 1]
         label_path = os.path.join(self.label_dir, label_name)
@@ -73,42 +59,37 @@ class YOLOVOCDataset(Dataset):
         labels = []
 
         # Read YOLO format labels
-        with open(label_path, 'r') as f:
-            for line in f:
-                parts = line.strip().split()
-                if len(parts) != 5:
-                    continue
+        if os.path.exists(label_path):
+            with open(label_path, 'r') as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) != 5:
+                        continue
 
-                class_id = int(parts[0])
-                x_center = float(parts[1])
-                y_center = float(parts[2])
-                width = float(parts[3])
-                height = float(parts[4])
+                    class_id = int(parts[0])
+                    x_center = float(parts[1])
+                    y_center = float(parts[2])
+                    width = float(parts[3])
+                    height = float(parts[4])
 
-                # Convert YOLO format (normalized center) to corner format (pixel coordinates in original size)
-                x1 = (x_center - width / 2) * orig_width
-                y1 = (y_center - height / 2) * orig_height
-                x2 = (x_center + width / 2) * orig_width
-                y2 = (y_center + height / 2) * orig_height
+                    # Convert YOLO format (normalized center) to corner format (pixel coordinates)
+                    x1 = (x_center - width / 2) * orig_width
+                    y1 = (y_center - height / 2) * orig_height
+                    x2 = (x_center + width / 2) * orig_width
+                    y2 = (y_center + height / 2) * orig_height
 
-                # Scale to resized image
-                x1 = x1 * scale_x
-                y1 = y1 * scale_y
-                x2 = x2 * scale_x
-                y2 = y2 * scale_y
+                    # Clip to image boundaries
+                    x1 = max(0, min(x1, orig_width))
+                    y1 = max(0, min(y1, orig_height))
+                    x2 = max(0, min(x2, orig_width))
+                    y2 = max(0, min(y2, orig_height))
 
-                # Clip to image boundaries
-                x1 = max(0, min(x1, target_width))
-                y1 = max(0, min(y1, target_height))
-                x2 = max(0, min(x2, target_width))
-                y2 = max(0, min(y2, target_height))
+                    # Skip invalid boxes
+                    if x2 <= x1 or y2 <= y1:
+                        continue
 
-                # Skip invalid boxes
-                if x2 <= x1 or y2 <= y1:
-                    continue
-
-                boxes.append([x1, y1, x2, y2])
-                labels.append(class_id + 1)  # +1 for background class at index 0
+                    boxes.append([x1, y1, x2, y2])
+                    labels.append(class_id + 1)  # +1 for background class at index 0
 
         # Convert to tensors
         if len(boxes) == 0:
@@ -119,18 +100,16 @@ class YOLOVOCDataset(Dataset):
             boxes = torch.tensor(boxes, dtype=torch.float32)
             labels = torch.tensor(labels, dtype=torch.int64)
 
-        # Apply transformations
-        if self.transform:
-            image = self.transform(image)
-        else:
-            # Default: convert to tensor
-            image = transforms.ToTensor()(image)
-
+        # Prepare target
         target = {
             'boxes': boxes,
             'labels': labels,
             'image_id': torch.tensor([idx])
         }
+
+        # Apply transformations (resize, augmentation, normalization)
+        if self.transform:
+            image, target = self.transform(image, target)
 
         return image, target
 
@@ -141,13 +120,14 @@ class YOLOVOCDataset(Dataset):
         return 'background'
 
 
-def get_yolo_voc_datasets(root_dir, train_csv='train.csv', test_csv='test.csv',
-                          img_dir='images', label_dir='labels'):
+def get_yolo_voc_datasets(config=None, root_dir=None, train_csv='train.csv',
+                          test_csv='test.csv', img_dir='images', label_dir='labels'):
     """
     Create train and test datasets from YOLO format PASCAL VOC
 
     Args:
-        root_dir: Root directory containing all data
+        config: Configuration object (preferred)
+        root_dir: Root directory containing all data (fallback)
         train_csv: Training CSV filename
         test_csv: Test CSV filename
         img_dir: Images directory name
@@ -156,25 +136,33 @@ def get_yolo_voc_datasets(root_dir, train_csv='train.csv', test_csv='test.csv',
     Returns:
         train_dataset, test_dataset
     """
-    # Define transforms
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                           std=[0.229, 0.224, 0.225])
-    ])
+    # Import here to avoid circular dependency
+    from .data.transforms import get_transform
+
+    # Get parameters from config
+    if config is not None:
+        root_dir = config.dataset.root
+        train_csv = config.dataset.train_csv
+        test_csv = config.dataset.test_csv
+        img_dir = config.dataset.img_dir
+        label_dir = config.dataset.label_dir
+
+    # Define transforms (resize, augmentation, normalization)
+    train_transform = get_transform(train=True, config=config)
+    val_transform = get_transform(train=False, config=config)
 
     train_dataset = YOLOVOCDataset(
         csv_file=os.path.join(root_dir, train_csv),
         img_dir=os.path.join(root_dir, img_dir),
         label_dir=os.path.join(root_dir, label_dir),
-        transform=transform
+        transform=train_transform
     )
 
     test_dataset = YOLOVOCDataset(
         csv_file=os.path.join(root_dir, test_csv),
         img_dir=os.path.join(root_dir, img_dir),
         label_dir=os.path.join(root_dir, label_dir),
-        transform=transform
+        transform=val_transform
     )
 
     return train_dataset, test_dataset
